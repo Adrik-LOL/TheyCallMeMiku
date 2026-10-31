@@ -27,6 +27,7 @@ let talkingAction = null;
 let currentAction = null;
 let isMikuSpeaking = false;
 let previousFrameTime = performance.now();
+const conversationHistory = [];
 
 const chat = document.getElementById('chat');
 const chatForm = document.getElementById('chat-form');
@@ -226,13 +227,19 @@ async function handleFormSubmit(event) {
     const response = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question })
+      body: JSON.stringify({ question, conversation: conversationHistory })
     });
 
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || 'Request failed');
     }
+
+    conversationHistory.push(
+      { role: 'user', content: question },
+      { role: 'assistant', content: data.answer }
+    );
+    conversationHistory.splice(0, Math.max(0, conversationHistory.length - 12));
 
     addMessage(`Miku: ${data.answer}`, 'ai-message');
     speakMiku(data.answer);
