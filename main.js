@@ -22,6 +22,10 @@ scene.add(keyLight);
 let modelSize = null;
 let vrm = null;
 let mixer = null;
+let idleAction = null;
+let talkingAction = null;
+let currentAction = null;
+let isMikuSpeaking = false;
 let previousFrameTime = performance.now();
 
 const chat = document.getElementById('chat');
@@ -121,15 +125,34 @@ async function loadModelAndIdle() {
   const animationLoader = new GLTFLoader();
   animationLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
 
-  const animationGltf = await parseBinaryAsset(animationLoader, '/miku/idle.vrma');
-  const vrmAnimation = animationGltf.userData.vrmAnimations?.[0];
+  const [idleGltf, talkingGltf] = await Promise.all([
+    parseBinaryAsset(animationLoader, '/miku/idle.vrma'),
+    parseBinaryAsset(animationLoader, '/miku/talking.vrma')
+  ]);
+  const idleAnimation = idleGltf.userData.vrmAnimations?.[0];
+  const talkingAnimation = talkingGltf.userData.vrmAnimations?.[0];
 
-  if (!vrmAnimation) {
+  if (!idleAnimation) {
     throw new Error('idle.vrma did not contain a VRM animation.');
+  }
+  if (!talkingAnimation) {
+    throw new Error('talking.vrma did not contain a VRM animation.');
   }
 
   mixer = new THREE.AnimationMixer(vrm.scene);
-  mixer.clipAction(createVRMAnimationClip(vrmAnimation, vrm)).play();
+  idleAction = mixer.clipAction(createVRMAnimationClip(idleAnimation, vrm));
+  talkingAction = mixer.clipAction(createVRMAnimationClip(talkingAnimation, vrm));
+  setSpeakingAnimation(isMikuSpeaking);
+}
+
+function setSpeakingAnimation(isSpeaking) {
+  isMikuSpeaking = isSpeaking;
+  const nextAction = isSpeaking ? talkingAction : idleAction;
+  if (!nextAction || nextAction === currentAction) return;
+
+  currentAction?.fadeOut(0.2);
+  nextAction.reset().fadeIn(0.2).play();
+  currentAction = nextAction;
 }
 
 function advanceAnimation() {
@@ -159,6 +182,34 @@ function addMessage(text, className) {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function speakMiku(text) {
+  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
+    console.warn('Text-to-speech is not supported by this browser.');
+    return;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'it-IT';
+  utterance.rate = 0.96;
+  utterance.pitch = 1.08;
+  utterance.onstart = () => setSpeakingAnimation(true);
+  utterance.onend = () => setSpeakingAnimation(false);
+  utterance.onerror = (event) => {
+    setSpeakingAnimation(false);
+    console.warn('Text-to-speech playback failed:', event.error);
+  };
+
+  const italianVoices = window.speechSynthesis.getVoices()
+    .filter((voice) => voice.lang.toLowerCase().startsWith('it'));
+  const femaleVoiceHints = /\b(alice|bianca|carla|chiara|elsa|federica|giulia|lucia|paola|serena|silvia|sofia|female|woman)\b/i;
+  utterance.voice = italianVoices.find((voice) => femaleVoiceHints.test(voice.name));
+  if (!utterance.voice) {
+    utterance.voice = italianVoices[0];
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
+
 async function handleFormSubmit(event) {
   event.preventDefault();
 
@@ -184,9 +235,11 @@ async function handleFormSubmit(event) {
     }
 
     addMessage(`Miku: ${data.answer}`, 'ai-message');
+    speakMiku(data.answer);
   } catch (error) {
     console.error(error);
     addMessage('Miku: Sorry, something went wrong!', 'ai-message');
+    speakMiku('Sorry, something went wrong!');
   } finally {
     sendButton.disabled = false;
     sendButton.textContent = 'Send';
