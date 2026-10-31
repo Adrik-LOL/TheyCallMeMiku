@@ -20,6 +20,7 @@ The app is currently available **only in Italian**. / L'applicazione è attualme
 ## Funzionalità
 
 - Chat con Miku tramite l'API di OpenAI.
+- Miku ricorda il contesto della sessione corrente, mantenendo gli ultimi sei scambi. La memoria si azzera quando ricarichi la pagina.
 - Avatar 3D in formato VRM, con animazioni idle e parlato.
 - Sintesi vocale tramite le voci disponibili nel browser.
 
