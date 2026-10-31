@@ -3,10 +3,14 @@
 > An Italian-speaking Hatsune Miku chatbot with a 3D avatar, built because our teacher said it was a good idea. :3
 >
 > Made with love and pure hatred by [@Adrik-LOL](https://github.com/Adrik-LOL) and [@gloryxxx](https://github.com/gloryxxx), for the middle-school adventurers curious about what we do at our school.
+>
+> Most of this project was vibe-coded to save time, but two expert eyes reviewed the work, cutting or adding anything the AI came up with.
 
 > Un chatbot di Hatsune Miku con un avatar 3D, creato perché il prof ha detto che era una buona idea. :3
 >
 > Fatto con amore e puro odio da [@Adrik-LOL](https://github.com/Adrik-LOL) e [@gloryxxx](https://github.com/gloryxxx), per gli avventurieri delle scuole medie che vogliono scoprire cosa si fa nella nostra scuola.
+>
+> Il programma è stato in gran parte vibecoddato per risparmiare tempo, ma dietro c'è l'occhio clinico di due esperti, che hanno tagliato o aggiunto tutto ciò che l'IA ha combinato.
 >
 
 The app is currently available **only in Italian**. / L'applicazione è attualmente disponibile **solo in italiano**.
