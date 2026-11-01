@@ -28,6 +28,7 @@ let currentAction = null;
 let isMikuSpeaking = false;
 let previousFrameTime = performance.now();
 const conversationHistory = [];
+let speechAudioContext = null;
 
 const chat = document.getElementById('chat');
 const chatForm = document.getElementById('chat-form');
@@ -183,32 +184,48 @@ function addMessage(text, className) {
   messages.scrollTop = messages.scrollHeight;
 }
 
-function speakMiku(text) {
-  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
-    console.warn('Text-to-speech is not supported by this browser.');
-    return;
+function unlockSpeechAudio() {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    return Promise.reject(new Error('Web Audio API is not supported by this browser.'));
   }
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'it-IT';
-  utterance.rate = 0.96;
-  utterance.pitch = 1.08;
-  utterance.onstart = () => setSpeakingAnimation(true);
-  utterance.onend = () => setSpeakingAnimation(false);
-  utterance.onerror = (event) => {
+  if (!speechAudioContext) {
+    speechAudioContext = new AudioContextConstructor();
+  }
+
+  return speechAudioContext.resume();
+}
+
+async function speakMiku(audioUrl, audioReady) {
+  try {
+    console.info(`[TTS] Playing converted audio: ${audioUrl}`);
+    if (!await audioReady) return;
+
+    const response = await fetch(audioUrl);
+    if (!response.ok) {
+      throw new Error(`Audio file request failed with HTTP ${response.status}.`);
+    }
+
+    const audioBuffer = await speechAudioContext.decodeAudioData(await response.arrayBuffer());
+    const source = speechAudioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(speechAudioContext.destination);
+
+    await new Promise((resolve, reject) => {
+      source.addEventListener('ended', () => {
+        console.info('[TTS] Playback finished.');
+        setSpeakingAnimation(false);
+        resolve();
+      }, { once: true });
+      console.info('[TTS] Playback started.');
+      setSpeakingAnimation(true);
+      source.start();
+    });
+  } catch (error) {
     setSpeakingAnimation(false);
-    console.warn('Text-to-speech playback failed:', event.error);
-  };
-
-  const italianVoices = window.speechSynthesis.getVoices()
-    .filter((voice) => voice.lang.toLowerCase().startsWith('it'));
-  const femaleVoiceHints = /\b(alice|bianca|carla|chiara|elsa|federica|giulia|lucia|paola|serena|silvia|sofia|female|woman)\b/i;
-  utterance.voice = italianVoices.find((voice) => femaleVoiceHints.test(voice.name));
-  if (!utterance.voice) {
-    utterance.voice = italianVoices[0];
+    console.error('[TTS] Playback pipeline failed:', error);
   }
-
-  window.speechSynthesis.speak(utterance);
 }
 
 async function handleFormSubmit(event) {
@@ -216,6 +233,13 @@ async function handleFormSubmit(event) {
 
   const question = questionInput.value.trim();
   if (!question) return;
+
+  const audioReady = unlockSpeechAudio()
+    .then(() => true)
+    .catch((error) => {
+      console.error('[TTS] Could not unlock browser audio during submit:', error);
+      return false;
+    });
 
   addMessage(`You: ${question}`, 'user-message');
 
@@ -242,11 +266,14 @@ async function handleFormSubmit(event) {
     conversationHistory.splice(0, Math.max(0, conversationHistory.length - 12));
 
     addMessage(`Miku: ${data.answer}`, 'ai-message');
-    speakMiku(data.answer);
+    if (data.audioUrl) {
+      await speakMiku(data.audioUrl, audioReady);
+    } else if (data.audioError) {
+      console.error('[TTS] No converted audio URL was returned:', data.audioError);
+    }
   } catch (error) {
     console.error(error);
     addMessage('Miku: Sorry, something went wrong!', 'ai-message');
-    speakMiku('Sorry, something went wrong!');
   } finally {
     sendButton.disabled = false;
     sendButton.textContent = 'Send';

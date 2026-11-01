@@ -2,6 +2,8 @@ import 'dotenv/config';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
+import { execFileSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
 
@@ -9,6 +11,61 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = __dirname;
 const { version } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const rvcRoot = path.join(root, 'Retrieval-based-Voice-Conversion-WebUI');
+const rvcModel = path.join(root, 'miku', 'miku_power_rvc.pth');
+const venvPython = path.join(
+  rvcRoot,
+  '.venv',
+  process.platform === 'win32' ? 'Scripts' : 'bin',
+  process.platform === 'win32' ? 'python.exe' : 'python'
+);
+const pythonExecutable = process.env.RVC_PYTHON || (fs.existsSync(venvPython) ? venvPython : 'python');
+
+function findFfmpegExecutable() {
+  if (process.env.FFMPEG_PATH) {
+    const configuredPath = path.resolve(process.env.FFMPEG_PATH);
+    if (fs.existsSync(configuredPath)) return configuredPath;
+    console.warn(`[FFmpeg] FFMPEG_PATH does not exist: ${configuredPath}`);
+  }
+
+  const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+  try {
+    const paths = execFileSync(locator, ['ffmpeg'], {
+      encoding: 'utf8',
+      windowsHide: true
+    }).split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    const pathFromEnvironment = paths.find((candidate) => fs.existsSync(candidate));
+    if (pathFromEnvironment) return pathFromEnvironment;
+  } catch {
+    // Try the Windows package manager location next.
+  }
+
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    const wingetPackages = path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
+    try {
+      for (const packageName of fs.readdirSync(wingetPackages)) {
+        if (!packageName.toLowerCase().includes('ffmpeg')) continue;
+
+        const packagePath = path.join(wingetPackages, packageName);
+        for (const buildName of fs.readdirSync(packagePath)) {
+          const candidate = path.join(packagePath, buildName, 'bin', 'ffmpeg.exe');
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {
+      // FFmpeg can still be supplied through FFMPEG_PATH or PATH.
+    }
+  }
+
+  return null;
+}
+
+const ffmpegExecutable = findFfmpegExecutable();
+if (ffmpegExecutable) {
+  console.log(`[FFmpeg] Using: ${ffmpegExecutable}`);
+} else {
+  console.warn('[FFmpeg] Not found. Set FFMPEG_PATH or add ffmpeg.exe to PATH.');
+}
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_KEY });
 const contentTypes = {
@@ -17,6 +74,7 @@ const contentTypes = {
   '.json': 'application/json; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
   '.vrm': 'application/octet-stream',
   '.vrma': 'application/octet-stream'
 };
@@ -25,6 +83,300 @@ const sendJSON = (res, status, data) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 };
+
+function createRvcEnvironment() {
+  const environment = {
+    ...process.env,
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8'
+  };
+
+  if (ffmpegExecutable) {
+    const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === 'path') || 'PATH';
+    const ffmpegDirectory = path.dirname(ffmpegExecutable);
+    environment[pathKey] = [ffmpegDirectory, environment[pathKey]].filter(Boolean).join(path.delimiter);
+  }
+
+  return environment;
+}
+
+function runFfmpeg(args, operation) {
+  if (!ffmpegExecutable) {
+    return Promise.reject(new Error('FFmpeg was not found. Set FFMPEG_PATH or add ffmpeg.exe to PATH.'));
+  }
+
+  return new Promise((resolve, reject) => {
+    console.log(`[FFmpeg] ${operation}: ${ffmpegExecutable} ${args.join(' ')}`);
+    const ffmpegProcess = spawn(ffmpegExecutable, args, {
+      cwd: root,
+      windowsHide: true,
+      env: createRvcEnvironment(),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    ffmpegProcess.stdout.setEncoding('utf8');
+    ffmpegProcess.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      console.log(`[FFmpeg] ${chunk.trimEnd()}`);
+    });
+    ffmpegProcess.stderr.setEncoding('utf8');
+    ffmpegProcess.stderr.on('data', (chunk) => {
+      stderr += chunk;
+      console.error(`[FFmpeg] ${chunk.trimEnd()}`);
+    });
+    ffmpegProcess.once('error', (error) => {
+      reject(new Error(`Could not start FFmpeg at ${ffmpegExecutable}: ${error.message}`));
+    });
+    ffmpegProcess.once('close', (code) => {
+      console.log(`[FFmpeg] ${operation} exited with code ${code}.`);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        const details = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+        reject(new Error(`${operation} failed with code ${code}.${details ? `\n${details}` : ''}`));
+      }
+    });
+  });
+}
+
+async function inspectWav(filePath) {
+  const buffer = await fs.promises.readFile(filePath);
+  if (buffer.length < 44) {
+    throw new Error(`WAV is empty or too small: ${filePath} (${buffer.length} bytes).`);
+  }
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error(`Invalid WAV header (expected RIFF/WAVE): ${filePath}`);
+  }
+  if (buffer.readUInt32LE(4) + 8 > buffer.length) {
+    throw new Error(`WAV file is truncated: ${filePath}`);
+  }
+
+  let format = null;
+  let dataSize = 0;
+  for (let offset = 12; offset + 8 <= buffer.length;) {
+    const chunkName = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    if (chunkSize > buffer.length - chunkStart) {
+      throw new Error(`WAV chunk exceeds file size: ${filePath}`);
+    }
+
+    if (chunkName === 'fmt ' && chunkSize >= 16) {
+      format = {
+        codec: buffer.readUInt16LE(chunkStart),
+        channels: buffer.readUInt16LE(chunkStart + 2),
+        sampleRate: buffer.readUInt32LE(chunkStart + 4),
+        bitsPerSample: buffer.readUInt16LE(chunkStart + 14)
+      };
+    } else if (chunkName === 'data') {
+      dataSize = chunkSize;
+    }
+
+    offset = chunkStart + chunkSize + (chunkSize % 2);
+  }
+
+  if (!format || dataSize === 0) {
+    throw new Error(`WAV is missing a format or non-empty audio data chunk: ${filePath}`);
+  }
+
+  return { ...format, dataSize, size: buffer.length };
+}
+
+async function validateWavWithFfmpeg(filePath, label) {
+  const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  await runFfmpeg(['-v', 'error', '-i', filePath, '-f', 'null', nullOutput], label);
+}
+
+async function prepareRvcInput(inputPath, normalizedPath) {
+  const inputFormat = await inspectWav(inputPath);
+  console.log(`[WAV] Input: ${path.relative(root, inputPath)} (${inputFormat.size} bytes, ${inputFormat.sampleRate} Hz, ${inputFormat.channels} ch, ${inputFormat.bitsPerSample}-bit, codec ${inputFormat.codec}).`);
+
+  if (!ffmpegExecutable) {
+    throw new Error('FFmpeg was not found. Set FFMPEG_PATH or add ffmpeg.exe to PATH.');
+  }
+
+  let decodeError = null;
+  try {
+    await validateWavWithFfmpeg(inputPath, 'Input WAV decode check');
+  } catch (error) {
+    decodeError = error;
+    console.warn(`[WAV] FFmpeg could not decode the original; trying normalization: ${error.message}`);
+  }
+
+  const isCompatible = inputFormat.codec === 1 &&
+    inputFormat.channels === 1 &&
+    inputFormat.sampleRate === 44100 &&
+    inputFormat.bitsPerSample === 16;
+  if (isCompatible && !decodeError) return inputPath;
+
+  console.log('[WAV] Normalizing to mono, 44100 Hz, signed 16-bit PCM.');
+  try {
+    await runFfmpeg([
+      '-y', '-i', inputPath,
+      '-ac', '1',
+      '-ar', '44100',
+      '-c:a', 'pcm_s16le',
+      normalizedPath
+    ], 'WAV normalization');
+  } catch (error) {
+    if (decodeError) {
+      throw new Error(`Original WAV decode failed: ${decodeError.message}\nNormalization failed: ${error.message}`);
+    }
+    throw error;
+  }
+
+  const normalizedFormat = await inspectWav(normalizedPath);
+  if (normalizedFormat.codec !== 1 || normalizedFormat.channels !== 1 ||
+      normalizedFormat.sampleRate !== 44100 || normalizedFormat.bitsPerSample !== 16) {
+    throw new Error(`FFmpeg produced an incompatible normalized WAV: ${JSON.stringify(normalizedFormat)}`);
+  }
+  await validateWavWithFfmpeg(normalizedPath, 'Normalized WAV decode check');
+  console.log(`[WAV] Normalized file ready: ${path.relative(root, normalizedPath)} (${normalizedFormat.size} bytes).`);
+  return normalizedPath;
+}
+
+function runRvc(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-m', 'infer.cli',
+      '--model', rvcModel,
+      '--input', inputPath,
+      '--output', outputPath,
+      '--pitch', '0',
+      '--f0-method', 'rmvpe',
+      '--index-rate', '0',
+      '--overwrite'
+    ];
+    console.log(`[RVC] Python: ${pythonExecutable}`);
+    console.log(`[RVC] Working directory: ${rvcRoot}`);
+    console.log(`[RVC] Model: ${rvcModel}`);
+    console.log(`[RVC] Input WAV: ${inputPath}`);
+    console.log(`[RVC] Output WAV: ${outputPath}`);
+    console.log(`[RVC] Starting: ${pythonExecutable} ${args.join(' ')}`);
+
+    const rvcProcess = spawn(pythonExecutable, args, {
+      cwd: rvcRoot,
+      windowsHide: true,
+      env: createRvcEnvironment(),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    rvcProcess.stdout.setEncoding('utf8');
+    rvcProcess.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      console.log(`[RVC] ${chunk.trimEnd()}`);
+    });
+    rvcProcess.stderr.setEncoding('utf8');
+    rvcProcess.stderr.on('data', (chunk) => {
+      stderr += chunk;
+      console.error(`[RVC] ${chunk.trimEnd()}`);
+    });
+    rvcProcess.once('error', (error) => {
+      console.error('[RVC] Could not start Python:', error);
+      reject(error);
+    });
+    rvcProcess.once('close', (code) => {
+      console.log(`[RVC] Process exited with code ${code}.`);
+      if (code === 0) {
+        resolve();
+      } else {
+        const details = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+        reject(new Error(`RVC conversion failed (${code}).${details ? `\n${details}` : ''}`));
+      }
+    });
+  });
+}
+
+function runLocalTts(text, outputPath) {
+  if (process.platform !== 'win32') {
+    return Promise.reject(new Error('Local SAPI 5 text-to-speech requires Windows.'));
+  }
+
+  const script = [
+    '$ErrorActionPreference = "Stop"',
+    '[void][System.Reflection.Assembly]::LoadWithPartialName("System.Speech")',
+    '$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    '$voice = $synth.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -like "it-*" } | Select-Object -First 1',
+    'if ($voice) { $synth.SelectVoice($voice.VoiceInfo.Name); Write-Output ("Using voice: " + $voice.VoiceInfo.Name) } else { Write-Output "No Italian SAPI voice found; using the Windows default voice." }',
+    '$synth.SetOutputToWaveFile($env:MIKU_TTS_OUTPUT)',
+    '$synth.Speak($env:MIKU_TTS_TEXT)',
+    '$synth.Dispose()'
+  ].join('; ');
+
+  return new Promise((resolve, reject) => {
+    console.log(`[SAPI] Generating a local WAV: ${path.relative(root, outputPath)}`);
+    const sapiProcess = spawn('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      script
+    ], {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        MIKU_TTS_OUTPUT: outputPath,
+        MIKU_TTS_TEXT: text
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stderr = '';
+    sapiProcess.stdout.setEncoding('utf8');
+    sapiProcess.stdout.on('data', (chunk) => console.log(`[SAPI] ${chunk.trimEnd()}`));
+    sapiProcess.stderr.setEncoding('utf8');
+    sapiProcess.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-4000);
+      console.error(`[SAPI] ${chunk.trimEnd()}`);
+    });
+    sapiProcess.once('error', (error) => {
+      console.error('[SAPI] Could not start PowerShell:', error);
+      reject(error);
+    });
+    sapiProcess.once('close', (code) => {
+      console.log(`[SAPI] Process exited with code ${code}.`);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`SAPI 5 WAV generation failed (${code}): ${stderr.trim()}`));
+      }
+    });
+  });
+}
+
+async function generateRvcAudio(text) {
+  if (typeof text !== 'string' || !text.trim() || text.length > 1000) {
+    throw new Error('Speech text must contain 1 to 1000 characters.');
+  }
+  if (!fs.existsSync(rvcModel)) {
+    throw new Error(`RVC model not found: ${rvcModel}`);
+  }
+
+  const requestId = randomUUID();
+  const audioDirectory = path.join(root, 'generated-audio');
+  const inputPath = path.join(audioDirectory, `${requestId}-input.wav`);
+  const normalizedPath = path.join(audioDirectory, `${requestId}-normalized.wav`);
+  const outputPath = path.join(audioDirectory, `${requestId}-miku.wav`);
+
+  await fs.promises.mkdir(audioDirectory, { recursive: true });
+  console.log(`[TTS] Generating local SAPI WAV (${text.length} characters).`);
+  await runLocalTts(text, inputPath);
+  const inputFormat = await inspectWav(inputPath);
+  console.log(`[TTS] Valid WAV saved (${inputFormat.size} bytes): ${path.relative(root, inputPath)}`);
+
+  const rvcInputPath = await prepareRvcInput(inputPath, normalizedPath);
+  await runRvc(rvcInputPath, outputPath);
+
+  const outputFormat = await inspectWav(outputPath);
+  await validateWavWithFfmpeg(outputPath, 'RVC output WAV decode check');
+  console.log(`[RVC] Valid output WAV saved (${outputFormat.size} bytes): ${path.relative(root, outputPath)}`);
+
+  return `/generated-audio/${path.basename(outputPath)}`;
+}
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/story') {
@@ -348,9 +700,17 @@ Sei Hatsune Miku. Comportati di conseguenza.
   input: [...context, { role: 'user', content: question }]
 });
 
-      const answer = response.output_text;
+      const answer = response.output_text || 'I could not generate a response.';
       console.log('Miku response:', answer);
-      return sendJSON(res, 200, { answer: answer || 'I could not generate a response.' });
+      let audioUrl = null;
+      let audioError = null;
+      try {
+        audioUrl = await generateRvcAudio(answer);
+      } catch (error) {
+        audioError = error.message || 'Speech generation failed.';
+        console.error('[TTS/RVC] Audio generation failed; returning text without an audio URL:', error);
+      }
+      return sendJSON(res, 200, { answer, audioUrl, audioError });
     } catch (error) {
       console.error('OpenAI error:', error);
       return sendJSON(res, 500, { error: error.message || 'AI request failed.' });

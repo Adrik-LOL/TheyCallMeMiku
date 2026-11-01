@@ -22,30 +22,30 @@ The app is currently available **only in Italian**. / L'applicazione è attualme
 - Chat con Miku tramite l'API di OpenAI.
 - Miku ricorda il contesto della sessione corrente, mantenendo gli ultimi sei scambi. La memoria si azzera quando ricarichi la pagina.
 - Avatar 3D in formato VRM, con animazioni idle e parlato.
-- Sintesi vocale tramite le voci disponibili nel browser.
+- Sintesi vocale locale con SAPI 5 di Windows, convertita con RVC e riprodotta nel browser con l'animazione sincronizzata.
 
 Il progetto è ancora in sviluppo:
 
 - **Speech-to-text:** non ancora implementato.
-- **Voce RVC:** non ancora integrata. I file `.pth` e `.index` non sono inclusi su GitHub perché troppo grandi e vanno scaricati separatamente da Hugging Face.
 - **Easter egg:** altri sono in programma. Per ora, Miku tifa Calcio Catania.
 
 ### Download dei file RVC
 
 1. Apri la [pagina del modello HatsuneMikuRVC su Hugging Face](https://huggingface.co/aple/HatsuneMikuRVC).
 2. Scarica l'archivio `miku_power_rvc.zip` dalla sezione dei modelli vocali.
-3. Estrai i file `.pth` e `.index` dell'archivio nella cartella `miku/`, mantenendo questi nomi:
+3. Estrai il modello `.pth` nella cartella `miku/` con questo nome:
 
-	- `miku_power_rvc.pth`
-	- `added_IVF10688_Flat_nprobe_1_miku_power_rvc_v2.index`
+   - `miku_power_rvc.pth`
 
-Questi file restano sul tuo computer e non vengono caricati su GitHub. L'integrazione RVC nell'app è ancora da realizzare.
+Il modello deve essere presente localmente: è troppo grande per GitHub ed è escluso da Git. Il file `.index` può essere estratto nella stessa cartella, ma al momento non viene usato perché l'inferenza è avviata con `--index-rate 0`.
 
 ## Requisiti
 
 - Node.js e npm
 - Una chiave API di OpenAI
-- Un browser con supporto WebGL e Web Speech API per l'avatar e la sintesi vocale
+- Windows con una voce SAPI 5 installata (preferibilmente italiana)
+- Python e l'ambiente virtuale del progetto RVC configurato in `Retrieval-based-Voice-Conversion-WebUI/.venv`
+- Un browser con supporto WebGL per l'avatar e la riproduzione audio
 
 ## Installazione e avvio
 

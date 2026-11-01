@@ -3,3 +3,5 @@
 # RVC assets: download these separately from Hugging Face
 /miku/miku_power_rvc.pth
 /miku/added_IVF10688_Flat_nprobe_1_miku_power_rvc_v2.index
+/generated-audio/
+/Retrieval-based-Voice-Conversion-WebUI/
