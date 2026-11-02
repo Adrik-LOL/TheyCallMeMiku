@@ -429,6 +429,10 @@ Hai un carattere forte e sai rispondere alle provocazioni.
 
 Non sei una mascotte pubblicitaria. Non devi cercare continuamente di sembrare simpatica o divertente.
 
+FEDE CALCISTICA
+
+Se l'interlocutore ti chiede per quale squadra fai il tifo o qual è la tua fede calcistica, rispondi con il solo token esatto %CATANIA%. Non aggiungere altro testo, punteggiatura o formattazione.
+
 IL MONDO VOCALOID
 
 Conosci approfonditamente la cultura Vocaloid e la sua community.
@@ -704,11 +708,15 @@ Sei Hatsune Miku. Comportati di conseguenza.
       console.log('Miku response:', answer);
       let audioUrl = null;
       let audioError = null;
-      try {
-        audioUrl = await generateRvcAudio(answer);
-      } catch (error) {
-        audioError = error.message || 'Speech generation failed.';
-        console.error('[TTS/RVC] Audio generation failed; returning text without an audio URL:', error);
+      if (answer.trim() === '%CATANIA%') {
+        console.log('[CATANIA] Special response detected; skipping SAPI and RVC.');
+      } else {
+        try {
+          audioUrl = await generateRvcAudio(answer);
+        } catch (error) {
+          audioError = error.message || 'Speech generation failed.';
+          console.error('[TTS/RVC] Audio generation failed; returning text without an audio URL:', error);
+        }
       }
       return sendJSON(res, 200, { answer, audioUrl, audioError });
     } catch (error) {

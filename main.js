@@ -265,10 +265,16 @@ async function handleFormSubmit(event) {
     );
     conversationHistory.splice(0, Math.max(0, conversationHistory.length - 12));
 
-    addMessage(`Miku: ${data.answer}`, 'ai-message');
-    if (data.audioUrl) {
+    if (data.answer.trim() === '%CATANIA%') {
+      console.info('[CATANIA] Playing the local Catania WAV.');
+      await speakMiku('/miku/ale%20catania.wav', audioReady);
+    } else {
+      addMessage(`Miku: ${data.answer}`, 'ai-message');
+    }
+
+    if (data.answer.trim() !== '%CATANIA%' && data.audioUrl) {
       await speakMiku(data.audioUrl, audioReady);
-    } else if (data.audioError) {
+    } else if (data.answer.trim() !== '%CATANIA%' && data.audioError) {
       console.error('[TTS] No converted audio URL was returned:', data.audioError);
     }
   } catch (error) {
