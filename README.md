@@ -22,32 +22,34 @@ The app is currently available **only in Italian**. / L'applicazione è attualme
 - Chat con Miku tramite l'API di OpenAI.
 - Miku ricorda il contesto della sessione corrente, mantenendo gli ultimi sei scambi. La memoria si azzera quando ricarichi la pagina.
 - Avatar 3D in formato VRM, con animazioni idle e parlato.
-- Sintesi vocale locale con SAPI 5 di Windows, convertita con RVC e riprodotta nel browser con l'animazione sincronizzata.
+- Supporto per la voce di Miku: la sintesi vocale locale con SAPI 5 di Windows viene convertita con RVC e riprodotta nel browser con l'animazione sincronizzata.
 
 Il progetto è ancora in sviluppo:
 
 - **Speech-to-text:** non ancora implementato.
 - **Easter egg:** altri sono in programma. Per ora, Miku tifa Calcio Catania.
 
-### Download dei file RVC
+### Configurazione della voce RVC
 
-1. Apri la [pagina del modello HatsuneMikuRVC su Hugging Face](https://huggingface.co/aple/HatsuneMikuRVC).
-2. Scarica l'archivio `miku_power_rvc.zip` dalla sezione dei modelli vocali.
-3. Estrai il modello `.pth` nella cartella `miku/` con questo nome:
+Per configurare RVC e scaricare automaticamente i file necessari, apri il **Prompt dei comandi (CMD)** nella cartella del progetto ed esegui:
 
-   - `miku_power_rvc.pth`
+```bat
+setupRVC.bat
+```
 
-Il modello deve essere presente localmente: è troppo grande per GitHub ed è escluso da Git. Il file `.index` può essere estratto nella stessa cartella, ma al momento non viene usato perché l'inferenza è avviata con `--index-rate 0`.
+Lo script richiede Git, Python 3.12 e FFmpeg installati e disponibili nel `PATH`. Segui le istruzioni mostrate dal setup; al termine, RVC e il modello vocale di Miku saranno pronti. Il modello è troppo grande per GitHub e viene escluso da Git.
 
 ## Requisiti
 
 - Node.js e npm
 - Una chiave API di OpenAI
 - Windows con una voce SAPI 5 installata (preferibilmente italiana)
-- Python e l'ambiente virtuale del progetto RVC configurato in `Retrieval-based-Voice-Conversion-WebUI/.venv`
+- Git, Python 3.12 e FFmpeg disponibili nel `PATH` per configurare RVC
 - Un browser con supporto WebGL per l'avatar e la riproduzione audio
 
 ## Installazione e avvio
+
+Per installare TheyCallMeMiku, assicurati di avere almeno **25 GB di spazio libero**.
 
 Clona il repository e installa le dipendenze:
 
@@ -55,6 +57,12 @@ Clona il repository e installa le dipendenze:
 git clone https://github.com/Adrik-LOL/TheyCallMeMiku.git
 cd TheyCallMeMiku
 npm install
+```
+
+Prima di avviare il server, configura la voce RVC dal Prompt dei comandi (CMD):
+
+```bat
+setupRVC.bat
 ```
 
 Crea un file `.env` nella cartella principale del progetto e inserisci la tua chiave API:

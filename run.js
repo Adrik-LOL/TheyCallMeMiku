@@ -244,7 +244,7 @@ function runRvc(inputPath, outputPath) {
       '--model', rvcModel,
       '--input', inputPath,
       '--output', outputPath,
-      '--pitch', '0',
+      '--pitch', '12',
       '--f0-method', 'rmvpe',
       '--index-rate', '0',
       '--overwrite'
