@@ -39,6 +39,30 @@ setupRVC.bat
 
 Lo script richiede Git, Python 3.12 e FFmpeg installati e disponibili nel `PATH`. Segui le istruzioni mostrate dal setup; al termine, RVC e il modello vocale di Miku saranno pronti. Il modello è troppo grande per GitHub e viene escluso da Git.
 
+### Sintesi vocale dal terminale (`miku_tts.py`)
+
+`miku_tts.py` serve a generare un WAV con la voce RVC di Miku senza avviare la chat e senza chiamare l'API di OpenAI. Usa SAPI 5 di Windows per creare la voce di partenza, FFmpeg per normalizzare l'audio e il modello RVC locale per convertirlo.
+
+Dopo aver eseguito `setupRVC.bat`, apri un terminale nella cartella del progetto. Per inserire il testo quando richiesto:
+
+```bash
+py -3.12 miku_tts.py
+```
+
+Puoi anche passare il testo direttamente:
+
+```bash
+py -3.12 miku_tts.py "Ciao, sono Miku!"
+```
+
+Per scegliere dove salvare il WAV:
+
+```bash
+py -3.12 miku_tts.py "Ciao, sono Miku!" --output "audio\miku.wav"
+```
+
+Per impostazione predefinita, il file viene salvato in `generated-audio` con un nome univoco. Se il file di destinazione esiste già, lo script si ferma: aggiungi `--overwrite` per autorizzarne la sovrascrittura. Sono richiesti Windows, una voce SAPI 5 (preferibilmente italiana), FFmpeg e i file RVC configurati dal setup. Lo script usa prima l'ambiente Python di RVC, se presente; `RVC_PYTHON` e `FFMPEG_PATH` permettono di indicare percorsi alternativi. Il testo deve contenere al massimo 1000 caratteri.
+
 ## Requisiti
 
 - Node.js e npm
@@ -87,5 +111,6 @@ node run.js
 - Modello RVC di Miku: [aple/HatsuneMikuRVC](https://huggingface.co/aple/HatsuneMikuRVC).
 - Strumento per la conversione FBX in VRMA: [tk256ailab/fbx2vrma-converter](https://github.com/tk256ailab/fbx2vrma-converter).
 - Animazioni in VRMA: [Kiu-Q/hikari-archive](https://github.com/Kiu-Q/hikari-archive)
+- AUDIO2AUDIO RVC Repo: [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)
 
 > We're so sorry, we silly bakas don't know who made the VRM model for the avatar! If it's yours, please open an issue so we can give you proper credit. We're really sorry about the mix-up, and we'll gladly add your name! >_<
