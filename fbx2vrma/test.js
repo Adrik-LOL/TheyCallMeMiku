@@ -32,6 +32,27 @@ describe('generateHumanBones', () => {
     });
   });
 
+  it('should map FBX bone names with numeric suffixes to VRM humanoid bones', () => {
+    const converter = createConverter();
+    const gltfData = {
+      nodes: [
+        { name: 'Hips_6' },
+        { name: 'Spine_7' },
+        { name: 'Head_11' },
+        { name: 'LeftHandIndex1_23' },
+      ],
+    };
+
+    const bones = converter.generateHumanBones(gltfData);
+
+    assert.deepStrictEqual(bones, {
+      hips: { node: 0 },
+      spine: { node: 1 },
+      head: { node: 2 },
+      leftIndexProximal: { node: 3 },
+    });
+  });
+
   it('should skip nodes without matching bone names', () => {
     const converter = createConverter();
     const gltfData = {

@@ -80,9 +80,25 @@ const contentTypes = {
 };
 
 const sendJSON = (res, status, data) => {
+  if (res.destroyed || res.writableEnded) return;
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 };
+
+function getAbortError(signal) {
+  if (signal?.reason) return signal.reason;
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw getAbortError(signal);
+}
+
+function isAbortError(error, signal) {
+  return signal?.aborted || error?.name === 'AbortError';
+}
 
 function createRvcEnvironment() {
   const environment = {
@@ -100,9 +116,15 @@ function createRvcEnvironment() {
   return environment;
 }
 
-function runFfmpeg(args, operation) {
+function runFfmpeg(args, operation, signal) {
   if (!ffmpegExecutable) {
     return Promise.reject(new Error('FFmpeg was not found. Set FFMPEG_PATH or add ffmpeg.exe to PATH.'));
+  }
+
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    return Promise.reject(error);
   }
 
   return new Promise((resolve, reject) => {
@@ -111,11 +133,13 @@ function runFfmpeg(args, operation) {
       cwd: root,
       windowsHide: true,
       env: createRvcEnvironment(),
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(signal ? { signal } : {})
     });
 
     let stdout = '';
     let stderr = '';
+    let processError = null;
     ffmpegProcess.stdout.setEncoding('utf8');
     ffmpegProcess.stdout.on('data', (chunk) => {
       stdout += chunk;
@@ -127,10 +151,20 @@ function runFfmpeg(args, operation) {
       console.error(`[FFmpeg] ${chunk.trimEnd()}`);
     });
     ffmpegProcess.once('error', (error) => {
-      reject(new Error(`Could not start FFmpeg at ${ffmpegExecutable}: ${error.message}`));
+      processError = signal?.aborted
+        ? getAbortError(signal)
+        : new Error(`Could not start FFmpeg at ${ffmpegExecutable}: ${error.message}`);
     });
     ffmpegProcess.once('close', (code) => {
       console.log(`[FFmpeg] ${operation} exited with code ${code}.`);
+      if (signal?.aborted) {
+        reject(getAbortError(signal));
+        return;
+      }
+      if (processError) {
+        reject(processError);
+        return;
+      }
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
@@ -184,12 +218,13 @@ async function inspectWav(filePath) {
   return { ...format, dataSize, size: buffer.length };
 }
 
-async function validateWavWithFfmpeg(filePath, label) {
+async function validateWavWithFfmpeg(filePath, label, signal) {
   const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null';
-  await runFfmpeg(['-v', 'error', '-i', filePath, '-f', 'null', nullOutput], label);
+  await runFfmpeg(['-v', 'error', '-i', filePath, '-f', 'null', nullOutput], label, signal);
 }
 
-async function prepareRvcInput(inputPath, normalizedPath) {
+async function prepareRvcInput(inputPath, normalizedPath, signal) {
+  throwIfAborted(signal);
   const inputFormat = await inspectWav(inputPath);
   console.log(`[WAV] Input: ${path.relative(root, inputPath)} (${inputFormat.size} bytes, ${inputFormat.sampleRate} Hz, ${inputFormat.channels} ch, ${inputFormat.bitsPerSample}-bit, codec ${inputFormat.codec}).`);
 
@@ -199,8 +234,9 @@ async function prepareRvcInput(inputPath, normalizedPath) {
 
   let decodeError = null;
   try {
-    await validateWavWithFfmpeg(inputPath, 'Input WAV decode check');
+    await validateWavWithFfmpeg(inputPath, 'Input WAV decode check', signal);
   } catch (error) {
+    if (isAbortError(error, signal)) throw error;
     decodeError = error;
     console.warn(`[WAV] FFmpeg could not decode the original; trying normalization: ${error.message}`);
   }
@@ -219,8 +255,9 @@ async function prepareRvcInput(inputPath, normalizedPath) {
       '-ar', '44100',
       '-c:a', 'pcm_s16le',
       normalizedPath
-    ], 'WAV normalization');
+    ], 'WAV normalization', signal);
   } catch (error) {
+    if (isAbortError(error, signal)) throw error;
     if (decodeError) {
       throw new Error(`Original WAV decode failed: ${decodeError.message}\nNormalization failed: ${error.message}`);
     }
@@ -232,12 +269,18 @@ async function prepareRvcInput(inputPath, normalizedPath) {
       normalizedFormat.sampleRate !== 44100 || normalizedFormat.bitsPerSample !== 16) {
     throw new Error(`FFmpeg produced an incompatible normalized WAV: ${JSON.stringify(normalizedFormat)}`);
   }
-  await validateWavWithFfmpeg(normalizedPath, 'Normalized WAV decode check');
+  await validateWavWithFfmpeg(normalizedPath, 'Normalized WAV decode check', signal);
   console.log(`[WAV] Normalized file ready: ${path.relative(root, normalizedPath)} (${normalizedFormat.size} bytes).`);
   return normalizedPath;
 }
 
-function runRvc(inputPath, outputPath) {
+function runRvc(inputPath, outputPath, signal) {
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+
   return new Promise((resolve, reject) => {
     const args = [
       '-m', 'infer.cli',
@@ -260,11 +303,13 @@ function runRvc(inputPath, outputPath) {
       cwd: rvcRoot,
       windowsHide: true,
       env: createRvcEnvironment(),
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(signal ? { signal } : {})
     });
 
     let stdout = '';
     let stderr = '';
+    let processError = null;
     rvcProcess.stdout.setEncoding('utf8');
     rvcProcess.stdout.on('data', (chunk) => {
       stdout += chunk;
@@ -276,11 +321,21 @@ function runRvc(inputPath, outputPath) {
       console.error(`[RVC] ${chunk.trimEnd()}`);
     });
     rvcProcess.once('error', (error) => {
-      console.error('[RVC] Could not start Python:', error);
-      reject(error);
+      processError = signal?.aborted
+        ? getAbortError(signal)
+        : error;
+      if (!signal?.aborted) console.error('[RVC] Could not start Python:', error);
     });
     rvcProcess.once('close', (code) => {
       console.log(`[RVC] Process exited with code ${code}.`);
+      if (signal?.aborted) {
+        reject(getAbortError(signal));
+        return;
+      }
+      if (processError) {
+        reject(processError);
+        return;
+      }
       if (code === 0) {
         resolve();
       } else {
@@ -291,9 +346,15 @@ function runRvc(inputPath, outputPath) {
   });
 }
 
-function runLocalTts(text, outputPath) {
+function runLocalTts(text, outputPath, signal) {
   if (process.platform !== 'win32') {
     return Promise.reject(new Error('Local SAPI 5 text-to-speech requires Windows.'));
+  }
+
+  try {
+    throwIfAborted(signal);
+  } catch (error) {
+    return Promise.reject(error);
   }
 
   const script = [
@@ -322,10 +383,12 @@ function runLocalTts(text, outputPath) {
         MIKU_TTS_OUTPUT: outputPath,
         MIKU_TTS_TEXT: text
       },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(signal ? { signal } : {})
     });
 
     let stderr = '';
+    let processError = null;
     sapiProcess.stdout.setEncoding('utf8');
     sapiProcess.stdout.on('data', (chunk) => console.log(`[SAPI] ${chunk.trimEnd()}`));
     sapiProcess.stderr.setEncoding('utf8');
@@ -334,11 +397,21 @@ function runLocalTts(text, outputPath) {
       console.error(`[SAPI] ${chunk.trimEnd()}`);
     });
     sapiProcess.once('error', (error) => {
-      console.error('[SAPI] Could not start PowerShell:', error);
-      reject(error);
+      processError = signal?.aborted
+        ? getAbortError(signal)
+        : error;
+      if (!signal?.aborted) console.error('[SAPI] Could not start PowerShell:', error);
     });
     sapiProcess.once('close', (code) => {
       console.log(`[SAPI] Process exited with code ${code}.`);
+      if (signal?.aborted) {
+        reject(getAbortError(signal));
+        return;
+      }
+      if (processError) {
+        reject(processError);
+        return;
+      }
       if (code === 0) {
         resolve();
       } else {
@@ -348,7 +421,8 @@ function runLocalTts(text, outputPath) {
   });
 }
 
-async function generateRvcAudio(text) {
+async function generateRvcAudio(text, signal) {
+  throwIfAborted(signal);
   if (typeof text !== 'string' || !text.trim() || text.length > 1000) {
     throw new Error('Speech text must contain 1 to 1000 characters.');
   }
@@ -363,16 +437,20 @@ async function generateRvcAudio(text) {
   const outputPath = path.join(audioDirectory, `${requestId}-miku.wav`);
 
   await fs.promises.mkdir(audioDirectory, { recursive: true });
+  throwIfAborted(signal);
   console.log(`[TTS] Generating local SAPI WAV (${text.length} characters).`);
-  await runLocalTts(text, inputPath);
+  await runLocalTts(text, inputPath, signal);
+  throwIfAborted(signal);
   const inputFormat = await inspectWav(inputPath);
   console.log(`[TTS] Valid WAV saved (${inputFormat.size} bytes): ${path.relative(root, inputPath)}`);
 
-  const rvcInputPath = await prepareRvcInput(inputPath, normalizedPath);
-  await runRvc(rvcInputPath, outputPath);
+  const rvcInputPath = await prepareRvcInput(inputPath, normalizedPath, signal);
+  throwIfAborted(signal);
+  await runRvc(rvcInputPath, outputPath, signal);
+  throwIfAborted(signal);
 
   const outputFormat = await inspectWav(outputPath);
-  await validateWavWithFfmpeg(outputPath, 'RVC output WAV decode check');
+  await validateWavWithFfmpeg(outputPath, 'RVC output WAV decode check', signal);
   console.log(`[RVC] Valid output WAV saved (${outputFormat.size} bytes): ${path.relative(root, outputPath)}`);
 
   return `/generated-audio/${path.basename(outputPath)}`;
@@ -380,9 +458,23 @@ async function generateRvcAudio(text) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/story') {
+    const actionController = new AbortController();
+    const { signal } = actionController;
+    const abortAction = () => {
+      if (signal.aborted) return;
+      console.info('[Action] Client disconnected; cancelling generation.');
+      actionController.abort();
+    };
+    const handleResponseClose = () => {
+      if (!res.writableEnded) abortAction();
+    };
+    req.once('aborted', abortAction);
+    res.once('close', handleResponseClose);
+
     try {
       let body = '';
       for await (const chunk of req) body += chunk.toString();
+      throwIfAborted(signal);
 
       const { question, conversation = [] } = JSON.parse(body);
       if (typeof question !== 'string' || !question.trim()) {
@@ -411,7 +503,7 @@ LINGUA E FORMATO
 
 Parla esclusivamente in italiano.
 
-Non superare 1000 caratteri per risposta.
+Non superare 500 caratteri per risposta.
 
 Usa soltanto testo semplice.
 
@@ -702,8 +794,9 @@ Le dinamiche tra personaggi vengono prima delle citazioni casuali.
 Sei Hatsune Miku. Comportati di conseguenza.
 `,
   input: [...context, { role: 'user', content: question }]
-});
+}, { signal });
 
+      throwIfAborted(signal);
       const answer = response.output_text || 'I could not generate a response.';
       console.log('Miku response:', answer);
       let audioUrl = null;
@@ -712,16 +805,24 @@ Sei Hatsune Miku. Comportati di conseguenza.
         console.log('[CATANIA] Special response detected; skipping SAPI and RVC.');
       } else {
         try {
-          audioUrl = await generateRvcAudio(answer);
+          audioUrl = await generateRvcAudio(answer, signal);
         } catch (error) {
+          if (isAbortError(error, signal)) throw error;
           audioError = error.message || 'Speech generation failed.';
           console.error('[TTS/RVC] Audio generation failed; returning text without an audio URL:', error);
         }
       }
       return sendJSON(res, 200, { answer, audioUrl, audioError });
     } catch (error) {
+      if (isAbortError(error, signal)) {
+        console.info('[Action] Generation cancelled.');
+        return;
+      }
       console.error('OpenAI error:', error);
       return sendJSON(res, 500, { error: error.message || 'AI request failed.' });
+    } finally {
+      req.off('aborted', abortAction);
+      res.off('close', handleResponseClose);
     }
   }
 

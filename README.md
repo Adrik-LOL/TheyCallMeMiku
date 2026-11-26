@@ -21,7 +21,7 @@ The app is currently available **only in Italian**. / L'applicazione è attualme
 
 - Chat con Miku tramite l'API di OpenAI.
 - Miku ricorda il contesto della sessione corrente, mantenendo gli ultimi sei scambi. La memoria si azzera quando ricarichi la pagina.
-- Avatar 3D in formato VRM, con animazioni idle e parlato.
+- Avatar 3D in formato VRM, con animazioni idle e parlato e ballo.
 - Supporto per la voce di Miku: la sintesi vocale locale con SAPI 5 di Windows viene convertita con RVC e riprodotta nel browser con l'animazione sincronizzata.
 
 Il progetto è ancora in sviluppo:
@@ -85,6 +85,7 @@ node run.js
 
 - Chatbot e progetto: [@Adrik-LOL](https://github.com/Adrik-LOL) e [@gloryxxx](https://github.com/gloryxxx).
 - Modello RVC di Miku: [aple/HatsuneMikuRVC](https://huggingface.co/aple/HatsuneMikuRVC).
-- Strumento per la conversione FBX in VRMA: [fbx2vrma-converter](https://github.com/tk256ailab/fbx2vrma-converter).
+- Strumento per la conversione FBX in VRMA: [tk256ailab/fbx2vrma-converter](https://github.com/tk256ailab/fbx2vrma-converter).
+- Animazioni in VRMA: [Kiu-Q/hikari-archive](https://github.com/Kiu-Q/hikari-archive)
 
 > We're so sorry, we silly bakas don't know who made the VRM model for the avatar! If it's yours, please open an issue so we can give you proper credit. We're really sorry about the mix-up, and we'll gladly add your name! >_<
