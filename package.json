@@ -1,6 +1,6 @@
 {
   "name": "theycallmemiku",
-  "version": "beta-1.0.1",
+  "version": "beta-1.1.0",
   "description": "This is Miku but as an AI chatbot.",
   "type": "module",
   "main": "run.js",
@@ -8,7 +8,7 @@
     "test": "node run.js"
   },
   "author": "AdrianoTech",
-  "license": "ISC",
+  "license": "GNU",
   "dependencies": {
     "@pixiv/three-vrm": "^3.5.5",
     "@pixiv/three-vrm-animation": "^3.5.5",
