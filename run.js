@@ -411,7 +411,7 @@ LINGUA E FORMATO
 
 Parla esclusivamente in italiano.
 
-Non superare 1000 caratteri per risposta.
+Non superare 500 caratteri per risposta.
 
 Usa soltanto testo semplice.
 
