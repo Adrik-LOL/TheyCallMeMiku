@@ -13,7 +13,7 @@
       height: 100%;
       margin: 0;
       overflow: hidden;
-      background-image: linear-gradient(135deg, rgba(10, 14, 30, 0.6), rgba(25, 38, 58, 0.2)), url('https://i.redd.it/bm0sfj1ni9we1.jpeg');
+      background-image: linear-gradient(135deg, rgba(10, 14, 30, 0.6), rgba(25, 38, 58, 0.2)), url('miku/bk.jpe');
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
@@ -185,6 +185,16 @@
       border-radius: 8px;
       cursor: pointer;
     }
+
+    #send.is-stop {
+      background: #b83b4b;
+      color: white;
+      font-weight: 600;
+    }
+
+    #send.is-stop:hover {
+      background: #d34b5b;
+    }
   </style>
   <script type="importmap">
       {
@@ -200,12 +210,12 @@
 
 <body>
   <div id="chat">
-    <button id="chat-toggle" type="button" aria-label="Toggle chat">Chat</button>
+    <button id="chat-toggle" type="button" aria-label="Toggle chat">💬</button>
 
     <div class="chat-panel">
       <div class="mode-switch" role="tablist" aria-label="Interaction mode">
         <button class="mode-button active" type="button" data-mode="text" aria-label="Text chat">💬</button>
-        <button class="mode-button" type="button" data-mode="voice" aria-label="Voice mode">🎙️</button>
+        <!-- <button class="mode-button" type="button" data-mode="voice" aria-label="Voice mode">🎙️</button> -->
       </div>
 
       <div id="messages"></div>

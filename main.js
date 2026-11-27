@@ -24,11 +24,15 @@ let vrm = null;
 let mixer = null;
 let idleAction = null;
 let talkingAction = null;
+let danceAction = null;
 let currentAction = null;
 let isMikuSpeaking = false;
 let previousFrameTime = performance.now();
 const conversationHistory = [];
 let speechAudioContext = null;
+let isActionInProgress = false;
+let activeActionController = null;
+let currentSpeechSource = null;
 
 const chat = document.getElementById('chat');
 const chatForm = document.getElementById('chat-form');
@@ -121,6 +125,7 @@ async function loadModelAndIdle() {
   modelSize = bounds.getSize(new THREE.Vector3());
 
   vrm.scene.position.sub(center);
+  vrm.scene.position.z += 0.5;
   scene.add(vrm.scene);
   fitCameraToModel();
 
@@ -144,17 +149,61 @@ async function loadModelAndIdle() {
   mixer = new THREE.AnimationMixer(vrm.scene);
   idleAction = mixer.clipAction(createVRMAnimationClip(idleAnimation, vrm));
   talkingAction = mixer.clipAction(createVRMAnimationClip(talkingAnimation, vrm));
+
+  try {
+    const danceGltf = await parseBinaryAsset(animationLoader, '/miku/dance.vrma');
+    const danceAnimation = danceGltf.userData.vrmAnimations?.[0];
+    if (!danceAnimation) {
+      throw new Error('dance.vrma did not contain a VRM animation.');
+    }
+    const hipsTranslationTrack = danceAnimation.humanoidTracks.translation.get('hips');
+    const initialHipHeight = hipsTranslationTrack?.values[1];
+    if (!hipsTranslationTrack || !Number.isFinite(initialHipHeight) || initialHipHeight <= 1e-3) {
+      throw new Error('dance.vrma does not have a usable initial hips height.');
+    }
+
+    danceAnimation.restHipsPosition.y = initialHipHeight;
+    const danceClip = createVRMAnimationClip(danceAnimation, vrm);
+    constrainDanceRootMotion(danceClip);
+    danceAction = mixer.clipAction(danceClip);
+  } catch (error) {
+    console.warn('[Animation] Optional dance.vrma unavailable; using the talking animation.', error);
+  }
+
   setSpeakingAnimation(isMikuSpeaking);
 }
 
-function setSpeakingAnimation(isSpeaking) {
+function setSpeakingAnimation(isSpeaking, useDance = false) {
   isMikuSpeaking = isSpeaking;
-  const nextAction = isSpeaking ? talkingAction : idleAction;
+  const nextAction = isSpeaking
+    ? (useDance && danceAction ? danceAction : talkingAction)
+    : idleAction;
   if (!nextAction || nextAction === currentAction) return;
 
   currentAction?.fadeOut(0.2);
   nextAction.reset().fadeIn(0.2).play();
   currentAction = nextAction;
+}
+
+function constrainDanceRootMotion(clip) {
+  const hipsNode = vrm?.humanoid.getNormalizedBoneNode('hips');
+  const hipsPositionTrack = hipsNode
+    ? clip.tracks.find((track) => track.name === `${hipsNode.name}.position`)
+    : null;
+  if (!hipsPositionTrack || hipsPositionTrack.values.length < 3) {
+    throw new Error('dance.vrma did not produce a hips position track.');
+  }
+
+  const startingX = hipsPositionTrack.values[0];
+  const maximumHorizontalTravel = 0.15;
+  for (let i = 0; i < hipsPositionTrack.values.length; i += 3) {
+    const relativeX = hipsPositionTrack.values[i] - startingX;
+    hipsPositionTrack.values[i] = startingX + THREE.MathUtils.clamp(
+      relativeX,
+      -maximumHorizontalTravel,
+      maximumHorizontalTravel
+    );
+  }
 }
 
 function advanceAnimation() {
@@ -197,33 +246,59 @@ function unlockSpeechAudio() {
   return speechAudioContext.resume();
 }
 
-async function speakMiku(audioUrl, audioReady) {
+function stopCurrentAction() {
+  if (!isActionInProgress) return;
+
+  console.info('[Action] Stop requested.');
+  activeActionController?.abort();
+  currentSpeechSource?.stop();
+  setSpeakingAnimation(false);
+}
+
+async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal) {
   try {
     console.info(`[TTS] Playing converted audio: ${audioUrl}`);
-    if (!await audioReady) return;
+    if (!await audioReady || signal.aborted) return;
 
-    const response = await fetch(audioUrl);
+    const response = await fetch(audioUrl, { signal });
     if (!response.ok) {
       throw new Error(`Audio file request failed with HTTP ${response.status}.`);
     }
 
     const audioBuffer = await speechAudioContext.decodeAudioData(await response.arrayBuffer());
+    if (signal.aborted) return;
+
     const source = speechAudioContext.createBufferSource();
+    currentSpeechSource = source;
     source.buffer = audioBuffer;
     source.connect(speechAudioContext.destination);
 
     await new Promise((resolve, reject) => {
+      let danceTimer = null;
       source.addEventListener('ended', () => {
-        console.info('[TTS] Playback finished.');
+        if (danceTimer !== null) clearTimeout(danceTimer);
+        if (currentSpeechSource === source) currentSpeechSource = null;
+        console.info(signal.aborted ? '[TTS] Playback stopped.' : '[TTS] Playback finished.');
         setSpeakingAnimation(false);
         resolve();
       }, { once: true });
       console.info('[TTS] Playback started.');
-      setSpeakingAnimation(true);
+      setSpeakingAnimation(true, danceForFirstSeconds > 0);
       source.start();
+      if (danceForFirstSeconds > 0 && danceAction) {
+        console.info(`[Animation] Dance animation active for the first ${danceForFirstSeconds} seconds.`);
+        danceTimer = setTimeout(() => {
+          console.info('[Animation] Switching from dance to talking animation.');
+          setSpeakingAnimation(true);
+        }, danceForFirstSeconds * 1000);
+      }
     });
   } catch (error) {
     setSpeakingAnimation(false);
+    if (signal.aborted || error.name === 'AbortError') {
+      console.info('[TTS] Playback stopped.');
+      return;
+    }
     console.error('[TTS] Playback pipeline failed:', error);
   }
 }
@@ -231,8 +306,17 @@ async function speakMiku(audioUrl, audioReady) {
 async function handleFormSubmit(event) {
   event.preventDefault();
 
+  if (isActionInProgress) {
+    stopCurrentAction();
+    return;
+  }
+
   const question = questionInput.value.trim();
   if (!question) return;
+
+  isActionInProgress = true;
+  activeActionController = new AbortController();
+  const actionSignal = activeActionController.signal;
 
   const audioReady = unlockSpeechAudio()
     .then(() => true)
@@ -244,17 +328,31 @@ async function handleFormSubmit(event) {
   addMessage(`You: ${question}`, 'user-message');
 
   questionInput.value = '';
-  sendButton.disabled = true;
-  sendButton.textContent = '...';
+  sendButton.disabled = false;
+  sendButton.textContent = 'Stop';
+  sendButton.classList.add('is-stop');
+  sendButton.setAttribute('aria-label', 'Stop current action');
 
   try {
+    if (question === '%ARCHIMEDE%') {
+      console.log('[ARCHIMEDE] %ARCHIMEDE%: playing the local Archimede WAV.');
+      await speakMiku('/miku/archimede.wav', audioReady, 35, actionSignal);
+      return;
+    } else if (question === '%ARCHIMEDE2%') {
+      console.log('[ARCHIMEDE] %ARCHIMEDE2%: playing the local Archimede2 WAV.');
+      await speakMiku('/miku/archimede2.wav', audioReady, 0, actionSignal);
+      return;
+    }
+
     const response = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, conversation: conversationHistory })
+      body: JSON.stringify({ question, conversation: conversationHistory }),
+      signal: actionSignal
     });
 
     const data = await response.json();
+    if (actionSignal.aborted) return;
     if (!response.ok) {
       throw new Error(data.error || 'Request failed');
     }
@@ -267,22 +365,30 @@ async function handleFormSubmit(event) {
 
     if (data.answer.trim() === '%CATANIA%') {
       console.info('[CATANIA] Playing the local Catania WAV.');
-      await speakMiku('/miku/ale%20catania.wav', audioReady);
+      await speakMiku('/miku/ale%20catania.wav', audioReady, 35, actionSignal);
     } else {
       addMessage(`Miku: ${data.answer}`, 'ai-message');
     }
 
     if (data.answer.trim() !== '%CATANIA%' && data.audioUrl) {
-      await speakMiku(data.audioUrl, audioReady);
+      await speakMiku(data.audioUrl, audioReady, 0, actionSignal);
     } else if (data.answer.trim() !== '%CATANIA%' && data.audioError) {
       console.error('[TTS] No converted audio URL was returned:', data.audioError);
     }
   } catch (error) {
-    console.error(error);
-    addMessage('Miku: Sorry, something went wrong!', 'ai-message');
+    if (actionSignal.aborted || error.name === 'AbortError') {
+      console.info('[Action] Current action stopped.');
+    } else {
+      console.error(error);
+      addMessage('Miku: Sorry, something went wrong!', 'ai-message');
+    }
   } finally {
+    isActionInProgress = false;
+    activeActionController = null;
     sendButton.disabled = false;
     sendButton.textContent = 'Send';
+    sendButton.classList.remove('is-stop');
+    sendButton.setAttribute('aria-label', 'Send message');
     questionInput.focus();
   }
 }
@@ -292,6 +398,12 @@ window.addEventListener('resize', resizeRenderer);
 resizeRenderer();
 
 chatForm.addEventListener('submit', handleFormSubmit);
+sendButton.addEventListener('click', (event) => {
+  if (isActionInProgress) {
+    event.preventDefault();
+    stopCurrentAction();
+  }
+});
 
 loadModelAndIdle().catch((error) => {
   console.error('Could not load Miku and idle animation:', error);
