@@ -1,6 +1,6 @@
 {
   "name": "theycallmemiku",
-  "version": "beta-1.0.1",
+  "version": "beta-1.2.0",
   "description": "This is Miku but as an AI chatbot.",
   "type": "module",
   "main": "run.js",
