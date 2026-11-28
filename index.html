@@ -6,6 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>They Call me MIKU</title>
   <style>
+    :root {
+      --page-background: url('miku/bk.jpe');
+    }
+
     html,
     body {
       position: relative;
@@ -13,7 +17,7 @@
       height: 100%;
       margin: 0;
       overflow: hidden;
-      background-image: linear-gradient(135deg, rgba(10, 14, 30, 0.6), rgba(25, 38, 58, 0.2)), url('https://i.redd.it/bm0sfj1ni9we1.jpeg');
+      background-image: linear-gradient(135deg, rgba(10, 14, 30, 0.6), rgba(25, 38, 58, 0.2)), var(--page-background);
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
@@ -28,6 +32,26 @@
       height: 100%;
       z-index: 0;
       background: transparent;
+    }
+
+    #scene-transition {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 400ms ease-in-out;
+    }
+
+    #scene-transition.is-visible {
+      opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #scene-transition {
+        transition-duration: 1ms;
+      }
     }
 
     #chat {
@@ -226,6 +250,8 @@
       </form>
     </div>
   </div>
+
+  <div id="scene-transition" aria-hidden="true"></div>
 
   <script type="module" src="main.js"></script>
 </body>

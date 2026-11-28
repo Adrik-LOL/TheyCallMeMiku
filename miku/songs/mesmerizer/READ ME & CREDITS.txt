@@ -1,0 +1,59 @@
+MOTION IS A-POSED BASED ON PJDIVA!
+
+IMPORTANT NOTE:
+For this motion to work correctly with your model it MUST have the following bones and configurations:
+
+- 腰 / waist
+- Bones センター, グルーブ, 腰, and 上半身 must be paired with 下半身
+- Bone 上半身1 / upperbody bone 1 (Must be paired with 上半身2 and the bone 上半身 must be paired with 上半身1)
+- For better performance, add a second motherbone (全ての親) to your model
+
+*Here's 2 videos on YouTube that shows you how you should configure your model:
+(Both videos were made by Seto)
+https://www.youtube.com/watch?v=SS17j4bgdHs
+https://www.youtube.com/watch?v=W8lZTOJge-4
+
+If you use this motion, please credit (or just copy-paste) from below:
+
+Mesmerizer by 32ki
+https://www.youtube.com/watch?v=19y8YTbvri8
+
+Motion by Nabix / Durles / Rellis Starlab
+Motion Actors / Nabix & Tia Lee
+Choreo by SEGA & Crypton Future Media
+
+Motion Retarget by Durles
+Facials by Durles / SAUGU
+
+We also included the original .fbx file in case anyone wants to use it outside of MMD!!
+
+-------------------------------------------------------------------------------------------
+
+MOTIONはProject DIVAに基づいたAポーズです！
+
+重要な注意:
+このモーションをモデルで正しく動作させるためには、以下のボーンおよび設定が必須です：
+
+- 腰
+- ボーン「センター」「グルーブ」「腰」「上半身」は「下半身」とペアにする必要があります
+- ボーン「上半身1」（「上半身2」とペアにし、さらに「上半身」は「上半身1」とペアにする必要があります）
+- より良いパフォーマンスのために、モデルに「全ての親」を2つ追加してください
+
+※以下はモデルの設定方法を説明しているYouTube動画です：
+（どちらの動画もSetoさんによるものです）
+https://www.youtube.com/watch?v=SS17j4bgdHs  
+https://www.youtube.com/watch?v=W8lZTOJge-4
+
+このモーションを使用する場合は、以下をクレジット（またはコピペ）してください：
+
+メズマライザー - サツキ
+https://www.youtube.com/watch?v=19y8YTbvri8
+
+モーション制作： Nabix / Durles / Rellis Starlab
+モーションアクター： Nabix & Tia Lee
+振付： SEGA & Crypton Future Media
+
+モーションリターゲット： Durles
+表情: Durles / SAUGU
+
+元の .fbx ファイルも同梱してありますので、MMD 以外で使用したい方もご利用いただけます！！
