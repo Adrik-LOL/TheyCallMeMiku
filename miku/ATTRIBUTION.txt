@@ -1,5 +1,0 @@
-Animation: dance.vrma
-Original asset: dance_gangnam_style.vrma
-Source: https://github.com/ruslanmv/3D-Avatar-Chatbot/tree/d4dcf99ef897f0e270722bd80f5a803779909653/addons/vrma-dance
-The source project documents this animation as converted from its bundled BVH motion and validated with 52 humanoid bones and 55 animation channels.
-License: Apache License 2.0; see Apache-2.0-LICENSE.txt.
