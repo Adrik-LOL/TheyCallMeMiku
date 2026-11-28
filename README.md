@@ -191,4 +191,4 @@ node run.js
 - Animazioni in VRMA: [Kiu-Q/hikari-archive](https://github.com/Kiu-Q/hikari-archive)
 - AUDIO2AUDIO RVC Repo: [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)
 - Modello VRM di Miku: era bundled con World is Mine
-- Tutti i VMD poi convertiti in VRM: nella cartella /miku/songs/ si trovano i crediti nelle rispettive sottocartelle
+- Tutti i VMD poi convertiti in VRMA: nella cartella /miku/songs/ si trovano i crediti nelle rispettive sottocartelle
