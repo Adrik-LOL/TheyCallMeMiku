@@ -5,6 +5,7 @@ import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-v
 
 const scene = new THREE.Scene();
 scene.background = null;
+const sceneFadeDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 400;
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.01, 1000);
 const renderer = new THREE.WebGLRenderer({ alpha: true });
@@ -13,8 +14,6 @@ renderer.setClearColor(0x000000, 0);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x333344, 2));
-
 const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
 keyLight.position.set(3, 6, 8);
 scene.add(keyLight);
@@ -22,6 +21,12 @@ scene.add(keyLight);
 let modelSize = null;
 let vrm = null;
 let mixer = null;
+let performanceStage = null;
+let modelBasePosition = null;
+let performanceStageTop = null;
+let performanceFootBones = [];
+let performanceFootOffset = 0;
+const footWorldPosition = new THREE.Vector3();
 let idleAction = null;
 let talkingAction = null;
 let danceAction = null;
@@ -33,8 +38,13 @@ let speechAudioContext = null;
 let isActionInProgress = false;
 let activeActionController = null;
 let currentSpeechSource = null;
+let currentSpeechSourceStarted = false;
+let sceneTransitionVersion = 0;
+const songAnimationActions = new Map();
+let animationLoader;
 
 const chat = document.getElementById('chat');
+const sceneTransition = document.getElementById('scene-transition');
 const chatForm = document.getElementById('chat-form');
 const questionInput = document.getElementById('question');
 const messages = document.getElementById('messages');
@@ -126,10 +136,13 @@ async function loadModelAndIdle() {
 
   vrm.scene.position.sub(center);
   vrm.scene.position.z += 0.5;
+  vrm.scene.position.y -= 0.2;
+  modelBasePosition = vrm.scene.position.clone();
   scene.add(vrm.scene);
   fitCameraToModel();
+  createPerformanceStage();
 
-  const animationLoader = new GLTFLoader();
+  animationLoader = new GLTFLoader();
   animationLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
 
   const [idleGltf, talkingGltf] = await Promise.all([
@@ -173,10 +186,108 @@ async function loadModelAndIdle() {
   setSpeakingAnimation(isMikuSpeaking);
 }
 
-function setSpeakingAnimation(isSpeaking, useDance = false) {
+function createPerformanceStage() {
+  const stage = new THREE.Group();
+  const width = Math.max(modelSize.x * 5, 2.2);
+  const originalDepth = Math.max(modelSize.z * 4, 2);
+  const depth = originalDepth * 1.5;
+  const thickness = 0.12;
+  const stageTop = -modelSize.y / 2 - 0.025;
+  performanceStageTop = stageTop;
+  const stageZ = 0.15 - (depth - originalDepth) / 2;
+  const platformMaterial = new THREE.MeshStandardMaterial({
+    color: 0x111526,
+    metalness: 0.72,
+    roughness: 0.3,
+    emissive: 0x10162b,
+    emissiveIntensity: 0.5
+  });
+  const platform = new THREE.Mesh(
+    new THREE.BoxGeometry(width, thickness, depth),
+    platformMaterial
+  );
+  platform.position.set(0, stageTop - thickness / 2, stageZ);
+  stage.add(platform);
+
+  const frontTrim = new THREE.Mesh(
+    new THREE.BoxGeometry(width * 0.96, 0.025, 0.025),
+    new THREE.MeshBasicMaterial({ color: 0x4cecff })
+  );
+  frontTrim.position.set(0, stageTop - 0.035, stageZ + depth / 2 + 0.006);
+  stage.add(frontTrim);
+
+  const lightBars = [
+    { x: -width / 3 - 0.1, color: 0xff38c7 },
+    { x: width / 3 + 0.1, color: 0x39e8ff }
+  ];
+  lightBars.forEach(({ x, color }) => {
+    const bar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.035, 1.1, 0.035),
+      new THREE.MeshBasicMaterial({ color })
+    );
+    bar.position.set(x, stageTop + 0.55, stageZ - depth * 0.2);
+    stage.add(bar);
+  });
+
+  const target = new THREE.Object3D();
+  target.position.set(0, 0, 0.5);
+  stage.add(target);
+
+  const spotlights = [
+    { color: 0xffedcf, intensity: 8, position: [0, modelSize.y * 1.65, stageZ + 2.2], angle: Math.PI / 5 },
+    { color: 0x45eaff, intensity: 6, position: [2.1, modelSize.y * 1.2, stageZ - 1.4], angle: Math.PI / 4 },
+    { color: 0xff3abf, intensity: 5, position: [-2.1, modelSize.y * 1.1, stageZ + 0.5], angle: Math.PI / 4 }
+  ];
+  spotlights.forEach(({ color, intensity, position, angle }) => {
+    const spotlight = new THREE.SpotLight(color, intensity, 0, angle, 0.7, 1.2);
+    spotlight.position.set(...position);
+    spotlight.target = target;
+    stage.add(spotlight);
+  });
+
+  stage.visible = false;
+  scene.add(stage);
+  performanceStage = stage;
+
+  const toeBones = ['leftToes', 'rightToes']
+    .map((boneName) => vrm.humanoid.getNormalizedBoneNode(boneName))
+    .filter(Boolean);
+  const footBones = ['leftFoot', 'rightFoot']
+    .map((boneName) => vrm.humanoid.getNormalizedBoneNode(boneName))
+    .filter(Boolean);
+  performanceFootBones = toeBones.length === 2 ? toeBones : footBones;
+  performanceFootOffset = toeBones.length === 2 ? 0.015 : 0.08;
+  if (performanceFootBones.length !== 2) {
+    console.warn('[Animation] Could not find both feet for stage grounding.');
+  }
+}
+
+function setPerformanceStage(active) {
+  if (!performanceStage) return;
+
+  performanceStage.visible = active;
+  keyLight.intensity = active ? 0.45 : 2.5;
+  vrm.scene.scale.setScalar(active ? 0.92 : 1);
+  vrm.scene.position.copy(modelBasePosition);
+}
+
+function groundMikuOnStage() {
+  if (!performanceFootBones.length) return;
+
+  vrm.scene.updateMatrixWorld(true);
+  let lowestFootY = Infinity;
+  for (const footBone of performanceFootBones) {
+    footBone.getWorldPosition(footWorldPosition);
+    lowestFootY = Math.min(lowestFootY, footWorldPosition.y);
+  }
+
+  vrm.scene.position.y += performanceStageTop + performanceFootOffset - lowestFootY;
+}
+
+function setSpeakingAnimation(isSpeaking, useDance = false, animationAction = null) {
   isMikuSpeaking = isSpeaking;
   const nextAction = isSpeaking
-    ? (useDance && danceAction ? danceAction : talkingAction)
+    ? (animationAction || (useDance && danceAction ? danceAction : talkingAction))
     : idleAction;
   if (!nextAction || nextAction === currentAction) return;
 
@@ -213,6 +324,7 @@ function advanceAnimation() {
 
   mixer?.update(delta);
   vrm?.update(delta);
+  if (performanceStage?.visible) groundMikuOnStage();
   renderer.render(scene, camera);
 }
 
@@ -251,11 +363,49 @@ function stopCurrentAction() {
 
   console.info('[Action] Stop requested.');
   activeActionController?.abort();
-  currentSpeechSource?.stop();
-  setSpeakingAnimation(false);
+  if (currentSpeechSourceStarted) {
+    currentSpeechSource?.stop();
+  } else if (performanceStage?.visible) {
+    void transitionSongScene(null, false, () => setSpeakingAnimation(false));
+  } else {
+    cancelSongSceneTransition();
+    setSongBackground(null);
+    setPerformanceStage(false);
+    setSpeakingAnimation(false);
+  }
 }
 
-async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal) {
+function setSongBackground(backgroundUrl) {
+  if (backgroundUrl) {
+    document.documentElement.style.setProperty('--page-background', `url("${backgroundUrl}")`);
+  } else {
+    document.documentElement.style.removeProperty('--page-background');
+  }
+}
+
+function cancelSongSceneTransition() {
+  sceneTransitionVersion += 1;
+  sceneTransition.classList.remove('is-visible');
+}
+
+async function transitionSongScene(backgroundUrl, stageActive, onSceneChanged) {
+  const transitionVersion = ++sceneTransitionVersion;
+  sceneTransition.classList.add('is-visible');
+  await new Promise(requestAnimationFrame);
+  await new Promise((resolve) => setTimeout(resolve, sceneFadeDuration));
+  if (transitionVersion !== sceneTransitionVersion) return false;
+
+  setSongBackground(backgroundUrl);
+  setPerformanceStage(stageActive);
+  const sceneChangeAccepted = onSceneChanged?.() !== false;
+
+  await new Promise(requestAnimationFrame);
+  if (transitionVersion !== sceneTransitionVersion) return false;
+  sceneTransition.classList.remove('is-visible');
+  return sceneChangeAccepted;
+}
+
+async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal, animationAction = null, backgroundUrl = null, usePerformanceStage = false) {
   try {
     console.info(`[TTS] Playing converted audio: ${audioUrl}`);
     if (!await audioReady || signal.aborted) return;
@@ -270,6 +420,7 @@ async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal)
 
     const source = speechAudioContext.createBufferSource();
     currentSpeechSource = source;
+    currentSpeechSourceStarted = false;
     source.buffer = audioBuffer;
     source.connect(speechAudioContext.destination);
 
@@ -277,14 +428,40 @@ async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal)
       let danceTimer = null;
       source.addEventListener('ended', () => {
         if (danceTimer !== null) clearTimeout(danceTimer);
-        if (currentSpeechSource === source) currentSpeechSource = null;
+        if (currentSpeechSource === source) {
+          currentSpeechSource = null;
+          currentSpeechSourceStarted = false;
+        }
         console.info(signal.aborted ? '[TTS] Playback stopped.' : '[TTS] Playback finished.');
-        setSpeakingAnimation(false);
-        resolve();
+        const finishScene = usePerformanceStage || backgroundUrl
+          ? transitionSongScene(null, false, () => setSpeakingAnimation(false))
+          : Promise.resolve(setSpeakingAnimation(false));
+        finishScene.then(resolve, reject);
       }, { once: true });
-      console.info('[TTS] Playback started.');
-      setSpeakingAnimation(true, danceForFirstSeconds > 0);
-      source.start();
+
+      const startPlayback = () => {
+        if (signal.aborted) return false;
+        setSpeakingAnimation(true, danceForFirstSeconds > 0, animationAction);
+        source.start();
+        currentSpeechSourceStarted = true;
+        console.info('[TTS] Playback started.');
+        return true;
+      };
+      const songScene = usePerformanceStage || Boolean(backgroundUrl);
+      const start = songScene
+        ? transitionSongScene(backgroundUrl, usePerformanceStage, startPlayback)
+        : Promise.resolve(startPlayback());
+      start.then((started) => {
+        if (!started) {
+          if (currentSpeechSource === source) currentSpeechSource = null;
+          if (signal.aborted) {
+            resolve();
+          } else {
+            reject(new Error('Song scene transition was interrupted.'));
+          }
+        }
+      }, reject);
+
       if (danceForFirstSeconds > 0 && danceAction) {
         console.info(`[Animation] Dance animation active for the first ${danceForFirstSeconds} seconds.`);
         danceTimer = setTimeout(() => {
@@ -294,13 +471,42 @@ async function speakMiku(audioUrl, audioReady, danceForFirstSeconds = 0, signal)
       }
     });
   } catch (error) {
-    setSpeakingAnimation(false);
+    const songSceneActive = performanceStage?.visible
+      || document.documentElement.style.getPropertyValue('--page-background') !== '';
+    if (songSceneActive) {
+      await transitionSongScene(null, false, () => setSpeakingAnimation(false));
+    } else {
+      setSpeakingAnimation(false);
+    }
+    currentSpeechSource = null;
+    currentSpeechSourceStarted = false;
     if (signal.aborted || error.name === 'AbortError') {
       console.info('[TTS] Playback stopped.');
       return;
     }
     console.error('[TTS] Playback pipeline failed:', error);
   }
+}
+
+async function loadSongAnimation(animationUrl) {
+  await modelReady;
+  if (!animationLoader || !mixer || !vrm) {
+    throw new Error('Miku is not ready to load the song animation.');
+  }
+
+  if (!songAnimationActions.has(animationUrl)) {
+    const actionPromise = parseBinaryAsset(animationLoader, animationUrl).then((gltf) => {
+      const animation = gltf.userData.vrmAnimations?.[0];
+      if (!animation) {
+        throw new Error(`Song animation did not contain a VRM animation: ${animationUrl}`);
+      }
+      return mixer.clipAction(createVRMAnimationClip(animation, vrm));
+    });
+    songAnimationActions.set(animationUrl, actionPromise);
+    actionPromise.catch(() => songAnimationActions.delete(animationUrl));
+  }
+
+  return songAnimationActions.get(animationUrl);
 }
 
 async function handleFormSubmit(event) {
@@ -363,7 +569,12 @@ async function handleFormSubmit(event) {
     );
     conversationHistory.splice(0, Math.max(0, conversationHistory.length - 12));
 
-    if (data.answer.trim() === '%CATANIA%') {
+    if (data.song) {
+      addMessage(`Miku: ${data.answer}`, 'ai-message');
+      const animationAction = await loadSongAnimation(data.song.animationUrl);
+      await speakMiku(data.song.audioUrl, audioReady, 0, actionSignal, animationAction, data.song.backgroundUrl, true);
+      return;
+    } else if (data.answer.trim() === '%CATANIA%') {
       console.info('[CATANIA] Playing the local Catania WAV.');
       await speakMiku('/miku/ale%20catania.wav', audioReady, 35, actionSignal);
     } else {
@@ -405,6 +616,7 @@ sendButton.addEventListener('click', (event) => {
   }
 });
 
-loadModelAndIdle().catch((error) => {
+const modelReady = loadModelAndIdle();
+modelReady.catch((error) => {
   console.error('Could not load Miku and idle animation:', error);
 });

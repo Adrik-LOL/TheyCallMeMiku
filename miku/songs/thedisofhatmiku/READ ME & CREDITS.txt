@@ -1,0 +1,9 @@
+Technical: Unlike most Diva ports, this is actually T-posed for Orig (Just how my baker works). This is generally more universal as Diva's rest pose is a bit too specific, If you don't like it use YYB or VMDSizing with the provided skeleton.
+
+Rules:
+
+No profiting or monetary gain
+Please credit SEGA/Am2 for the animation, MrPolarBear and me (Chi/Chips) for porting the animation.
+Usage in programs assisted previously or by AI is not allowed.
+Porting this motion to other game engines without permission will ruin it for everyone and make me stop releasing stuff. (Such as and not limited to: VRChat, ROBLOX) 
+Just have common sense and usage etiquette. 

@@ -75,6 +75,14 @@ const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.wasm': 'application/wasm',
   '.wav': 'audio/wav',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.jpe': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
   '.vrm': 'application/octet-stream',
   '.vrma': 'application/octet-stream'
 };
@@ -83,6 +91,105 @@ const sendJSON = (res, status, data) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 };
+
+function resolveSongAsset(songsDirectory, relativePath, extensions) {
+  if (!relativePath) return null;
+
+  const normalizedPath = relativePath.replace(/[\\/]+/g, path.sep);
+  if (path.isAbsolute(normalizedPath) || !extensions.includes(path.extname(normalizedPath).toLowerCase())) {
+    return null;
+  }
+
+  const songsRoot = path.resolve(songsDirectory);
+  const filePath = path.resolve(songsRoot, normalizedPath);
+  if (!filePath.startsWith(`${songsRoot}${path.sep}`) || !fs.existsSync(filePath)) {
+    return null;
+  }
+
+  return filePath;
+}
+
+function resolveSongPlayback(answer, songList, songsDirectory) {
+  const unavailableMarker = /\[\[SONG_UNAVAILABLE\]\]/gi;
+  if (unavailableMarker.test(answer)) {
+    const unavailableAnswer = answer
+      .replace(unavailableMarker, '')
+      .replace(/\[\[PLAY_SONG:[\s\S]*?\]\]/gi, '')
+      .trim();
+    return {
+      answer: unavailableAnswer || 'Ops, quel brano non è nel mio repertorio: devo ancora prepararlo per il palco!',
+      song: null
+    };
+  }
+
+  const markerPattern = /\[\[PLAY_SONG:([\s\S]*?)\]\]/gi;
+  const markers = [...answer.matchAll(markerPattern)];
+  if (!markers.length) return { answer, song: null };
+  if (markers.length !== 1) {
+    return {
+      answer: 'Ops, quel brano non è nel mio repertorio: devo ancora prepararlo per il palco!',
+      song: null
+    };
+  }
+
+  const entryPattern = /^\s*\d+\.\s*(.+?)\s*\((.+?\.wav)\s+e\s+(.+?\.vrma)(?:\s+e\s+(.+?\.(?:png|jpe?g|jpe|webp|gif|avif|bmp)))?\s*\)\s*$/i;
+  const catalogEntries = songList.split(/\r?\n/).flatMap((line) => {
+    const entry = line.match(entryPattern);
+    if (!entry) return [];
+
+    const [, name, audioPath, animationPath, backgroundPath] = entry;
+    return [{
+      line: line.trim(),
+      name: name.trim(),
+      audioPath,
+      animationPath,
+      backgroundPath
+    }];
+  });
+  const selectedEntry = markers[0][1].trim();
+  const selectedTitle = selectedEntry
+    .replace(/^\s*\d+\.\s*/, '')
+    .split('(')[0]
+    .trim();
+  const normalizeTitle = (title) => title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const listedEntry = catalogEntries.find((entry) => entry.line === selectedEntry)
+    || catalogEntries.find((entry) => normalizeTitle(entry.name) === normalizeTitle(selectedTitle));
+  if (!listedEntry) {
+    console.warn(`[Songs] The model selected a song not found in SONGS.LIST: ${selectedEntry}`);
+    return {
+      answer: 'Ops, quel brano non è nel mio repertorio: devo ancora prepararlo per il palco!',
+      song: null
+    };
+  }
+
+  const { name, audioPath, animationPath, backgroundPath } = listedEntry;
+  const audioFile = resolveSongAsset(songsDirectory, audioPath, ['.wav']);
+  const animationFile = resolveSongAsset(songsDirectory, animationPath, ['.vrma']);
+  const backgroundFile = backgroundPath
+    ? resolveSongAsset(songsDirectory, backgroundPath, ['.png', '.jpg', '.jpeg', '.jpe', '.webp', '.gif', '.avif', '.bmp'])
+    : null;
+  if (!audioFile || !animationFile) {
+    console.warn(`[Songs] Required song asset is missing for ${name}: ${audioPath} or ${animationPath}`);
+    return {
+      answer: 'Ops, quel brano non è nel mio repertorio: devo ancora prepararlo per il palco!',
+      song: null
+    };
+  }
+  if (backgroundPath && !backgroundFile) {
+    console.warn(`[Songs] Background image is missing for ${name}: ${backgroundPath}`);
+  }
+
+  const cleanAnswer = answer.replace(markerPattern, '').trim();
+  return {
+    answer: cleanAnswer || `Certo! Ecco ${name}!`,
+    song: { name, audioFile, animationFile, backgroundFile }
+  };
+}
 
 function createRvcEnvironment() {
   const environment = {
@@ -398,6 +505,15 @@ const server = http.createServer(async (req, res) => {
         ).slice(-12)
         : [];
 
+      const songsDirectory = path.join(root, 'miku', 'songs');
+      let songList = '';
+      try {
+        songList = await fs.promises.readFile(path.join(songsDirectory, 'SONGS.LIST'), 'utf8');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        console.warn('[Songs] SONGS.LIST is missing; no local songs are available.');
+      }
+
 const response = await client.responses.create({
   model: 'gpt-6-astra',
   instructions: `
@@ -501,6 +617,21 @@ Possono organizzare attività e combinare disastri insieme.
 Non menzionarle continuamente senza motivo. Devono sembrare amiche vere, non personaggi inseriti artificialmente nella conversazione.
 
 MUSICA E CULTURA
+
+CATALOGO E RICHIESTE MUSICALI
+
+Questo è il contenuto completo di SONGS.LIST. Leggi direttamente da qui sia le istruzioni sia i brani e i relativi percorsi:
+<SONGS_LIST>
+${songList || 'Catalogo non disponibile.'}
+</SONGS_LIST>
+
+Decidi tu dal contesto se l'interlocutore sta chiedendo informazioni sul catalogo o vuole davvero sentirti cantare. Se chiede quali brani puoi cantare, elenca quelli presenti in SONGS.LIST senza avviare la riproduzione.
+
+Se ti chiede di cantare un brano presente nel catalogo, oppure genericamente di cantare qualcosa, scegli il brano più adatto. Rispondi in modo naturale e aggiungi in fondo [[PLAY_SONG:TITOLO ESATTO DEL BRANO]], copiando il titolo come appare in SONGS.LIST. Il marcatore serve al programma e non va spiegato.
+
+Se il brano richiesto non è nel catalogo o non puoi eseguirlo, segui la risposta e il tono indicati in SONGS.LIST e aggiungi [[SONG_UNAVAILABLE]] in fondo. Il marcatore serve al programma e non va spiegato.
+
+Non aggiungere marcatori quando si parla di musica senza chiederti di esibirti.
 
 Conosci brani famosi come:
 World is Mine, Melt, Tell Your World, Senbonzakura, Rolling Girl, The Disappearance of Hatsune Miku, Ievan Polkka, PoPiPo, Miku, Love is War, Luka Luka Night Fever, Magnet, Triple Baka, Ochame Kinou, Lost One's Weeping, Tokyo Teddy Bear, Matryoshka, Mesmerizer e Romeo and Cinderella.
@@ -704,11 +835,14 @@ Sei Hatsune Miku. Comportati di conseguenza.
   input: [...context, { role: 'user', content: question }]
 });
 
-      const answer = response.output_text || 'I could not generate a response.';
+      const generatedAnswer = response.output_text || 'I could not generate a response.';
+      const { answer, song } = resolveSongPlayback(generatedAnswer, songList, songsDirectory);
       console.log('Miku response:', answer);
       let audioUrl = null;
       let audioError = null;
-      if (answer.trim() === '%CATANIA%') {
+      if (song) {
+        console.info(`[Songs] Playing local song: ${song.name}`);
+      } else if (answer.trim() === '%CATANIA%') {
         console.log('[CATANIA] Special response detected; skipping SAPI and RVC.');
       } else {
         try {
@@ -718,7 +852,19 @@ Sei Hatsune Miku. Comportati di conseguenza.
           console.error('[TTS/RVC] Audio generation failed; returning text without an audio URL:', error);
         }
       }
-      return sendJSON(res, 200, { answer, audioUrl, audioError });
+      const assetUrl = (filePath) => `/${path.relative(root, filePath).split(path.sep).map(encodeURIComponent).join('/')}`;
+      const songData = song ? {
+        name: song.name,
+        audioUrl: assetUrl(song.audioFile),
+        animationUrl: assetUrl(song.animationFile),
+        backgroundUrl: song.backgroundFile && fs.existsSync(song.backgroundFile)
+          ? assetUrl(song.backgroundFile)
+          : null
+      } : null;
+      if (song?.backgroundFile && !songData.backgroundUrl) {
+        console.warn(`[Songs] Background image is missing: ${song.backgroundFile}`);
+      }
+      return sendJSON(res, 200, { answer, audioUrl, audioError, song: songData });
     } catch (error) {
       console.error('OpenAI error:', error);
       return sendJSON(res, 500, { error: error.message || 'AI request failed.' });
